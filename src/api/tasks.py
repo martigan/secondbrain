@@ -20,6 +20,7 @@ from src.api.schemas import (
     TaskPageOutput,
     TaskUpdateInput,
 )
+from src.api.task_filters import InvalidTaskFilterError, build_task_list_filters
 from src.domain.services.task_state_machine import InvalidTaskTransitionError, TaskStateMachine
 from src.repositories.task_repository import TaskRepository
 
@@ -46,11 +47,22 @@ class TaskListResource(Resource):
         query_payload = {
             "limit": request.args.get("limit", default=20, type=int),
             "cursor": request.args.get("cursor"),
+            "status_eq": request.args.get("status_eq"),
+            "status_in": request.args.get("status_in"),
+            "due_date_gte": request.args.get("due_date_gte"),
+            "due_date_lte": request.args.get("due_date_lte"),
+            "created_at_gte": request.args.get("created_at_gte"),
+            "created_at_lte": request.args.get("created_at_lte"),
+            "title_contains": request.args.get("title_contains"),
         }
         try:
             query_input = TaskListQueryInput.model_validate(query_payload)
         except ValidationError as exc:
             return {"message": "Validation error", "errors": _validation_errors(exc)}, 400
+        try:
+            filters = build_task_list_filters(query_input)
+        except InvalidTaskFilterError as exc:
+            return {"message": "Validation error", "errors": [{"msg": str(exc)}]}, 400
 
         parsed_cursor: TaskCursor | None = None
         if query_input.cursor is not None:
@@ -63,6 +75,7 @@ class TaskListResource(Resource):
             user_id=_current_user_id(),
             limit=query_input.limit,
             cursor=parsed_cursor,
+            filters=filters,
         )
         next_cursor = None
         if has_next and tasks:
