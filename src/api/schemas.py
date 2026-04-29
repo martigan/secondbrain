@@ -52,3 +52,19 @@ class TaskOutput(BaseModel):
     due_date: date
     status: TaskStatus
     created_by_id: UUID
+
+
+class TaskListQueryInput(BaseModel):
+    limit: int = Field(default=20, ge=1, le=100)
+    cursor: str | None = None
+
+
+class TaskPageOutput(BaseModel):
+    limit: int
+    has_next: bool
+    next_cursor: str | None
+
+
+class TaskListOutput(BaseModel):
+    items: list[TaskOutput]
+    page: TaskPageOutput
