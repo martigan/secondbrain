@@ -290,6 +290,35 @@ def test_list_tasks_filter_with_pagination_no_overlap(client) -> None:
     assert first_ids.isdisjoint(second_ids)
 
 
+def test_list_tasks_filter_cursor_mismatch_returns_bad_request(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    for index in range(3):
+        created = client.post(
+            "/tasks",
+            headers=headers,
+            json={
+                "title": f"Cursor mismatch {index}",
+                "description": "cursor mismatch",
+                "due_date": (date.today() + timedelta(days=40 + index)).isoformat(),
+            },
+        ).get_json()
+        client.put(f"/tasks/{created['id']}", headers=headers, json={"status": "running"})
+
+    first_page = client.get("/tasks?status_eq=running&limit=2", headers=headers)
+    assert first_page.status_code == 200
+    cursor = first_page.get_json()["page"]["next_cursor"]
+
+    mismatch_response = client.get(
+        f"/tasks?status_eq=new&limit=2&cursor={cursor}",
+        headers=headers,
+    )
+
+    assert mismatch_response.status_code == 400
+    assert mismatch_response.get_json()["message"] == "Invalid cursor"
+
+
 def test_list_tasks_filter_conflicting_status_filters_returns_validation_error(client) -> None:
     token = _get_access_token(client)
     headers = {"Authorization": f"Bearer {token}"}

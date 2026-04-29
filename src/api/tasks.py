@@ -20,7 +20,11 @@ from src.api.schemas import (
     TaskPageOutput,
     TaskUpdateInput,
 )
-from src.api.task_filters import InvalidTaskFilterError, build_task_list_filters
+from src.api.task_filters import (
+    InvalidTaskFilterError,
+    build_task_list_filters,
+    task_filters_signature,
+)
 from src.domain.services.task_state_machine import InvalidTaskTransitionError, TaskStateMachine
 from src.repositories.task_repository import TaskRepository
 
@@ -63,12 +67,15 @@ class TaskListResource(Resource):
             filters = build_task_list_filters(query_input)
         except InvalidTaskFilterError as exc:
             return {"message": "Validation error", "errors": [{"msg": str(exc)}]}, 400
+        filters_signature = task_filters_signature(filters)
 
         parsed_cursor: TaskCursor | None = None
         if query_input.cursor is not None:
             try:
                 parsed_cursor = decode_task_cursor(query_input.cursor)
             except InvalidCursorError:
+                return {"message": "Invalid cursor"}, 400
+            if parsed_cursor.query_signature != filters_signature:
                 return {"message": "Invalid cursor"}, 400
 
         tasks, has_next = TaskRepository.list_by_user_paginated(
@@ -81,7 +88,11 @@ class TaskListResource(Resource):
         if has_next and tasks:
             last_task = tasks[-1]
             next_cursor = encode_task_cursor(
-                TaskCursor(created_at=last_task.created_at, id=last_task.id)
+                TaskCursor(
+                    created_at=last_task.created_at,
+                    id=last_task.id,
+                    query_signature=filters_signature,
+                )
             )
 
         response_payload = TaskListOutput(
