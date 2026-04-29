@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy import and_, or_
 
 from src.api.pagination import TaskCursor
+from src.api.task_filters import TaskListFilters
 from src.domain.models.task import Task, TaskStatus
 from src.extensions import db
 
@@ -32,9 +33,24 @@ class TaskRepository:
 
     @staticmethod
     def list_by_user_paginated(
-        user_id: UUID, limit: int, cursor: TaskCursor | None
+        user_id: UUID, limit: int, cursor: TaskCursor | None, filters: TaskListFilters
     ) -> tuple[list[Task], bool]:
         query = Task.query.filter_by(created_by_id=user_id)
+        if filters.status_eq is not None:
+            query = query.filter(Task.status == filters.status_eq)
+        if filters.status_in is not None:
+            query = query.filter(Task.status.in_(filters.status_in))
+        if filters.due_date_gte is not None:
+            query = query.filter(Task.due_date >= filters.due_date_gte)
+        if filters.due_date_lte is not None:
+            query = query.filter(Task.due_date <= filters.due_date_lte)
+        if filters.created_at_gte is not None:
+            query = query.filter(Task.created_at >= filters.created_at_gte)
+        if filters.created_at_lte is not None:
+            query = query.filter(Task.created_at <= filters.created_at_lte)
+        if filters.title_contains is not None:
+            query = query.filter(Task.title.ilike(f"%{filters.title_contains}%"))
+
         if cursor is not None:
             query = query.filter(
                 or_(
