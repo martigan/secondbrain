@@ -57,6 +57,7 @@ class TaskOutput(BaseModel):
 class TaskListQueryInput(BaseModel):
     limit: int = Field(default=20, ge=1, le=100)
     cursor: str | None = None
+    sort: str | None = None
     status_eq: TaskStatus | None = None
     status_in: str | None = None
     due_date_gte: date | None = None
@@ -73,6 +74,16 @@ class TaskListQueryInput(BaseModel):
         stripped = value.strip()
         if not stripped:
             raise ValueError("title_contains cannot be empty")
+        return stripped
+
+    @field_validator("sort")
+    @classmethod
+    def normalize_sort(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("sort cannot be empty")
         return stripped
 
     @field_validator("created_at_gte", "created_at_lte")

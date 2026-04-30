@@ -1,3 +1,4 @@
+import hashlib
 from typing import Any, cast
 from uuid import UUID
 
@@ -7,6 +8,7 @@ from flask_restx import Namespace, Resource
 from pydantic import ValidationError
 
 from src.api.pagination import (
+    CursorValues,
     InvalidCursorError,
     TaskCursor,
     decode_task_cursor,
@@ -25,6 +27,13 @@ from src.api.task_filters import (
     build_task_list_filters,
     task_filters_signature,
 )
+from src.api.task_sorting import (
+    InvalidTaskSortError,
+    TaskSortSpec,
+    canonical_task_sort,
+    parse_task_sort,
+)
+from src.domain.models.task import Task
 from src.domain.services.task_state_machine import InvalidTaskTransitionError, TaskStateMachine
 from src.repositories.task_repository import TaskRepository
 
@@ -44,6 +53,21 @@ def _current_user_id() -> UUID:
     return UUID(get_jwt_identity())
 
 
+def _build_query_signature(filter_signature: str, sort_signature: str) -> str:
+    canonical = f"{filter_signature}|{sort_signature}"
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _cursor_value_for_field(task: Task, spec: TaskSortSpec) -> str:
+    if spec.field.value == "created_at":
+        return task.created_at.isoformat()
+    if spec.field.value == "due_date":
+        return task.due_date.isoformat()
+    if spec.field.value == "status":
+        return task.status.value
+    raise ValueError("Unsupported sort field")
+
+
 @tasks_ns.route("")
 class TaskListResource(Resource):
     @jwt_required()
@@ -51,6 +75,7 @@ class TaskListResource(Resource):
         query_payload = {
             "limit": request.args.get("limit", default=20, type=int),
             "cursor": request.args.get("cursor"),
+            "sort": request.args.get("sort"),
             "status_eq": request.args.get("status_eq"),
             "status_in": request.args.get("status_in"),
             "due_date_gte": request.args.get("due_date_gte"),
@@ -68,6 +93,12 @@ class TaskListResource(Resource):
         except InvalidTaskFilterError as exc:
             return {"message": "Validation error", "errors": [{"msg": str(exc)}]}, 400
         filters_signature = task_filters_signature(filters)
+        try:
+            sort_specs = parse_task_sort(query_input.sort)
+        except InvalidTaskSortError as exc:
+            return {"message": "Validation error", "errors": [{"msg": str(exc)}]}, 400
+        sort_signature = canonical_task_sort(sort_specs)
+        query_signature = _build_query_signature(filters_signature, sort_signature)
 
         parsed_cursor: TaskCursor | None = None
         if query_input.cursor is not None:
@@ -75,7 +106,9 @@ class TaskListResource(Resource):
                 parsed_cursor = decode_task_cursor(query_input.cursor)
             except InvalidCursorError:
                 return {"message": "Invalid cursor"}, 400
-            if parsed_cursor.query_signature != filters_signature:
+            if parsed_cursor.query_signature != query_signature:
+                return {"message": "Invalid cursor"}, 400
+            if parsed_cursor.sort != sort_signature:
                 return {"message": "Invalid cursor"}, 400
 
         tasks, has_next = TaskRepository.list_by_user_paginated(
@@ -83,15 +116,24 @@ class TaskListResource(Resource):
             limit=query_input.limit,
             cursor=parsed_cursor,
             filters=filters,
+            sort_specs=sort_specs,
         )
         next_cursor = None
         if has_next and tasks:
             last_task = tasks[-1]
+            cursor_values = cast(
+                CursorValues,
+                {
+                    spec.field.value: _cursor_value_for_field(last_task, spec)
+                    for spec in sort_specs
+                },
+            )
+            cursor_values["id"] = str(last_task.id)
             next_cursor = encode_task_cursor(
                 TaskCursor(
-                    created_at=last_task.created_at,
-                    id=last_task.id,
-                    query_signature=filters_signature,
+                    sort=sort_signature,
+                    values=cursor_values,
+                    query_signature=query_signature,
                 )
             )
 
