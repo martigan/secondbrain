@@ -1,8 +1,14 @@
 import base64
 import json
 from dataclasses import dataclass
-from datetime import datetime
-from uuid import UUID
+from typing import NotRequired, Required, TypedDict, cast
+
+
+class CursorValues(TypedDict, total=False):
+    id: Required[str]
+    created_at: NotRequired[str]
+    due_date: NotRequired[str]
+    status: NotRequired[str]
 
 
 class InvalidCursorError(ValueError):
@@ -11,15 +17,15 @@ class InvalidCursorError(ValueError):
 
 @dataclass(frozen=True)
 class TaskCursor:
-    created_at: datetime
-    id: UUID
+    sort: str
+    values: CursorValues
     query_signature: str
 
 
 def encode_task_cursor(cursor: TaskCursor) -> str:
     payload = {
-        "created_at": cursor.created_at.isoformat(),
-        "id": str(cursor.id),
+        "sort": cursor.sort,
+        "values": cursor.values,
         "query_signature": cursor.query_signature,
     }
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
@@ -31,10 +37,17 @@ def decode_task_cursor(cursor: str) -> TaskCursor:
         padding = "=" * (-len(cursor) % 4)
         raw = base64.urlsafe_b64decode((cursor + padding).encode("utf-8")).decode("utf-8")
         payload = json.loads(raw)
-        created_at = datetime.fromisoformat(payload["created_at"])
-        task_id = UUID(payload["id"])
+        sort = str(payload["sort"])
+        values = payload["values"]
+        if not isinstance(values, dict):
+            raise ValueError("Invalid cursor values")
+        normalized_values = cast(
+            CursorValues, {str(key): str(value) for key, value in values.items()}
+        )
+        if "id" not in normalized_values:
+            raise ValueError("Cursor values must include id")
         query_signature = str(payload["query_signature"])
     except (KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
         raise InvalidCursorError("Invalid cursor") from exc
 
-    return TaskCursor(created_at=created_at, id=task_id, query_signature=query_signature)
+    return TaskCursor(sort=sort, values=normalized_values, query_signature=query_signature)

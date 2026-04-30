@@ -36,6 +36,8 @@ class Task(db.Model):  # type: ignore[misc]
             "created_at",
             "id",
         ),
+        Index("ix_tasks_user_due_date_id", "created_by_id", "due_date", "id"),
+        Index("ix_tasks_user_status_id", "created_by_id", "status", "id"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)

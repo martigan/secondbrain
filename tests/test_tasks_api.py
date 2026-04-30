@@ -359,3 +359,134 @@ def test_list_tasks_filter_invalid_values_return_validation_error(client) -> Non
     assert response_date.status_code == 400
     assert response_datetime.status_code == 400
     assert response_status_in.status_code == 400
+
+
+def test_list_tasks_sort_due_date_asc(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    client.post(
+        "/tasks",
+        headers=headers,
+        json={
+            "title": "Later",
+            "description": "sort test",
+            "due_date": (date.today() + timedelta(days=15)).isoformat(),
+        },
+    )
+    client.post(
+        "/tasks",
+        headers=headers,
+        json={
+            "title": "Sooner",
+            "description": "sort test",
+            "due_date": (date.today() + timedelta(days=5)).isoformat(),
+        },
+    )
+
+    response = client.get("/tasks?sort=due_date:asc", headers=headers)
+
+    assert response.status_code == 200
+    items = response.get_json()["items"]
+    assert len(items) >= 2
+    assert items[0]["due_date"] <= items[1]["due_date"]
+
+
+def test_list_tasks_sort_status_then_created_at(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    running = client.post(
+        "/tasks",
+        headers=headers,
+        json={
+            "title": "Running task",
+            "description": "sort test",
+            "due_date": (date.today() + timedelta(days=6)).isoformat(),
+        },
+    ).get_json()
+    new_task = client.post(
+        "/tasks",
+        headers=headers,
+        json={
+            "title": "New task",
+            "description": "sort test",
+            "due_date": (date.today() + timedelta(days=7)).isoformat(),
+        },
+    ).get_json()
+    client.put(f"/tasks/{running['id']}", headers=headers, json={"status": "running"})
+
+    response = client.get("/tasks?sort=status:asc,created_at:desc", headers=headers)
+
+    assert response.status_code == 200
+    statuses = [item["status"] for item in response.get_json()["items"]]
+    assert statuses.index("new") < statuses.index("running")
+    assert new_task["id"] in {item["id"] for item in response.get_json()["items"]}
+
+
+def test_list_tasks_sort_with_pagination_no_overlap(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    for index in range(5):
+        client.post(
+            "/tasks",
+            headers=headers,
+            json={
+                "title": f"Sorted page {index}",
+                "description": "sort + pagination",
+                "due_date": (date.today() + timedelta(days=10 + index)).isoformat(),
+            },
+        )
+
+    page_1 = client.get("/tasks?sort=due_date:asc&limit=2", headers=headers)
+    assert page_1.status_code == 200
+    first_data = page_1.get_json()
+    cursor = first_data["page"]["next_cursor"]
+    page_2 = client.get(f"/tasks?sort=due_date:asc&limit=2&cursor={cursor}", headers=headers)
+    assert page_2.status_code == 200
+    second_data = page_2.get_json()
+
+    first_ids = {item["id"] for item in first_data["items"]}
+    second_ids = {item["id"] for item in second_data["items"]}
+    assert first_ids.isdisjoint(second_ids)
+
+
+def test_list_tasks_invalid_sort_returns_validation_error(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    invalid_cases = [
+        "/tasks?sort=bad",
+        "/tasks?sort=title:asc",
+        "/tasks?sort=due_date:up",
+        "/tasks?sort=due_date:asc,due_date:desc",
+    ]
+    for path in invalid_cases:
+        response = client.get(path, headers=headers)
+        assert response.status_code == 400
+        assert response.get_json()["message"] == "Validation error"
+
+
+def test_list_tasks_cursor_sort_mismatch_returns_bad_request(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    for index in range(3):
+        client.post(
+            "/tasks",
+            headers=headers,
+            json={
+                "title": f"Sort mismatch {index}",
+                "description": "cursor sort mismatch",
+                "due_date": (date.today() + timedelta(days=20 + index)).isoformat(),
+            },
+        )
+
+    first_page = client.get("/tasks?sort=due_date:asc&limit=2", headers=headers)
+    assert first_page.status_code == 200
+    cursor = first_page.get_json()["page"]["next_cursor"]
+
+    mismatch = client.get(f"/tasks?sort=created_at:desc&limit=2&cursor={cursor}", headers=headers)
+    assert mismatch.status_code == 400
+    assert mismatch.get_json()["message"] == "Invalid cursor"

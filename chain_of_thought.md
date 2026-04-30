@@ -26,3 +26,7 @@ I chose to have advanced operators to be able to filter with multiple status whi
 I chose a flat suffix params syntax which I find readable.
 
 Indexes may not be the best, depending on volume, we might need to work on this (trigram on lower(title) for example insensitive case search is very expensive)
+
+## Sorting
+
+I chose a CSV syntax for the sort given we needed two params for a single sort (field:ASC/DESC). Implementation support multiple fields sorting
