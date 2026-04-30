@@ -17,3 +17,12 @@ The user model is strictly minimal for this exercice, in a production environmen
 Given the context, I implemented a cursor based pagination over a limit+offset one
 - large dataset
 - very changing dataset
+
+
+## Filtering
+
+I chose to have advanced operators to be able to filter with multiple status which may be practical if we want to filter the to be done tasks (new, running and paused) for example
+
+I chose a flat suffix params syntax which I find readable.
+
+Indexes may not be the best, depending on volume, we might need to work on this (trigram on lower(title) for example insensitive case search is very expensive)
