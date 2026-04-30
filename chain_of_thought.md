@@ -11,3 +11,9 @@ created_at might be redundant with uuid (datetime of creation is stored in it) b
 
 The user model is strictly minimal for this exercice, in a production environment, some fields may be useful to add (last_login for example) and some more endpoint to handle password reset and more.
 
+
+## Pagination
+
+Given the context, I implemented a cursor based pagination over a limit+offset one
+- large dataset
+- very changing dataset

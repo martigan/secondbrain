@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 from flask import request
 from flask_jwt_extended import create_access_token
 from flask_restx import Namespace, Resource
@@ -11,7 +13,7 @@ auth_ns = Namespace("auth", description="Authentication operations")
 
 
 def _validation_errors(exc: ValidationError) -> list[dict[str, object]]:
-    errors = exc.errors()
+    errors = cast(list[dict[str, Any]], exc.errors())
     for error in errors:
         ctx = error.get("ctx")
         if isinstance(ctx, dict) and "error" in ctx:

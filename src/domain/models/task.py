@@ -4,7 +4,7 @@ from datetime import date, datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, String, Text, Uuid, func
+from sqlalchemy import Date, DateTime, Enum, ForeignKey, Index, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.extensions import db
@@ -20,6 +20,9 @@ class TaskStatus(StrEnum):
 
 class Task(db.Model):  # type: ignore[misc]
     __tablename__ = "tasks"
+    __table_args__ = (
+        Index("ix_tasks_user_created_at_id_desc", "created_by_id", "created_at", "id"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     title: Mapped[str] = mapped_column(String(255), nullable=False)

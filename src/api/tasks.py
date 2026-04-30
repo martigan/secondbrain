@@ -1,3 +1,4 @@
+from typing import Any, cast
 from uuid import UUID
 
 from flask import request
@@ -5,7 +6,20 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 from flask_restx import Namespace, Resource
 from pydantic import ValidationError
 
-from src.api.schemas import TaskCreateInput, TaskOutput, TaskUpdateInput
+from src.api.pagination import (
+    InvalidCursorError,
+    TaskCursor,
+    decode_task_cursor,
+    encode_task_cursor,
+)
+from src.api.schemas import (
+    TaskCreateInput,
+    TaskListOutput,
+    TaskListQueryInput,
+    TaskOutput,
+    TaskPageOutput,
+    TaskUpdateInput,
+)
 from src.domain.services.task_state_machine import InvalidTaskTransitionError, TaskStateMachine
 from src.repositories.task_repository import TaskRepository
 
@@ -13,7 +27,7 @@ tasks_ns = Namespace("tasks", description="Task operations")
 
 
 def _validation_errors(exc: ValidationError) -> list[dict[str, object]]:
-    errors = exc.errors()
+    errors = cast(list[dict[str, Any]], exc.errors())
     for error in errors:
         ctx = error.get("ctx")
         if isinstance(ctx, dict) and "error" in ctx:
@@ -28,9 +42,44 @@ def _current_user_id() -> UUID:
 @tasks_ns.route("")
 class TaskListResource(Resource):
     @jwt_required()
-    def get(self) -> tuple[list[dict[str, str]], int]:
-        tasks = TaskRepository.list_by_user(_current_user_id())
-        return [TaskOutput.model_validate(task).model_dump(mode="json") for task in tasks], 200
+    def get(self) -> tuple[dict[str, object], int]:
+        query_payload = {
+            "limit": request.args.get("limit", default=20, type=int),
+            "cursor": request.args.get("cursor"),
+        }
+        try:
+            query_input = TaskListQueryInput.model_validate(query_payload)
+        except ValidationError as exc:
+            return {"message": "Validation error", "errors": _validation_errors(exc)}, 400
+
+        parsed_cursor: TaskCursor | None = None
+        if query_input.cursor is not None:
+            try:
+                parsed_cursor = decode_task_cursor(query_input.cursor)
+            except InvalidCursorError:
+                return {"message": "Invalid cursor"}, 400
+
+        tasks, has_next = TaskRepository.list_by_user_paginated(
+            user_id=_current_user_id(),
+            limit=query_input.limit,
+            cursor=parsed_cursor,
+        )
+        next_cursor = None
+        if has_next and tasks:
+            last_task = tasks[-1]
+            next_cursor = encode_task_cursor(
+                TaskCursor(created_at=last_task.created_at, id=last_task.id)
+            )
+
+        response_payload = TaskListOutput(
+            items=[TaskOutput.model_validate(task) for task in tasks],
+            page=TaskPageOutput(
+                limit=query_input.limit,
+                has_next=has_next,
+                next_cursor=next_cursor,
+            ),
+        )
+        return response_payload.model_dump(mode="json"), 200
 
     @jwt_required()
     def post(self) -> tuple[dict[str, str], int]:
