@@ -139,3 +139,223 @@ def test_list_tasks_with_invalid_limit_returns_validation_error(client) -> None:
         response = client.get(f"/tasks?limit={invalid_limit}", headers=headers)
         assert response.status_code == 400
         assert response.get_json()["message"] == "Validation error"
+
+
+def test_list_tasks_filter_status_eq_returns_expected_items(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    task = client.post(
+        "/tasks",
+        headers=headers,
+        json={
+            "title": "Status eq target",
+            "description": "Should become running",
+            "due_date": (date.today() + timedelta(days=2)).isoformat(),
+        },
+    ).get_json()
+    client.put(f"/tasks/{task['id']}", headers=headers, json={"status": "running"})
+
+    response = client.get("/tasks?status_eq=running", headers=headers)
+
+    assert response.status_code == 200
+    items = response.get_json()["items"]
+    assert items
+    assert all(item["status"] == "running" for item in items)
+
+
+def test_list_tasks_filter_status_in_returns_union(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    task = client.post(
+        "/tasks",
+        headers=headers,
+        json={
+            "title": "Status in target",
+            "description": "Will be running",
+            "due_date": (date.today() + timedelta(days=3)).isoformat(),
+        },
+    ).get_json()
+    client.put(f"/tasks/{task['id']}", headers=headers, json={"status": "running"})
+
+    response = client.get("/tasks?status_in=new,running", headers=headers)
+
+    assert response.status_code == 200
+    statuses = {item["status"] for item in response.get_json()["items"]}
+    assert statuses.issubset({"new", "running"})
+
+
+def test_list_tasks_filter_due_date_range(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    client.post(
+        "/tasks",
+        headers=headers,
+        json={
+            "title": "Within range",
+            "description": "due date in range",
+            "due_date": (date.today() + timedelta(days=6)).isoformat(),
+        },
+    )
+    client.post(
+        "/tasks",
+        headers=headers,
+        json={
+            "title": "Out of range",
+            "description": "due date out of range",
+            "due_date": (date.today() + timedelta(days=20)).isoformat(),
+        },
+    )
+
+    gte = (date.today() + timedelta(days=5)).isoformat()
+    lte = (date.today() + timedelta(days=10)).isoformat()
+    response = client.get(f"/tasks?due_date_gte={gte}&due_date_lte={lte}", headers=headers)
+
+    assert response.status_code == 200
+    titles = {item["title"] for item in response.get_json()["items"]}
+    assert "Within range" in titles
+    assert "Out of range" not in titles
+
+
+def test_list_tasks_filter_title_contains_case_insensitive(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    client.post(
+        "/tasks",
+        headers=headers,
+        json={
+            "title": "Quarterly REPORT",
+            "description": "Case test",
+            "due_date": (date.today() + timedelta(days=7)).isoformat(),
+        },
+    )
+
+    response = client.get("/tasks?title_contains=report", headers=headers)
+
+    assert response.status_code == 200
+    titles = [item["title"] for item in response.get_json()["items"]]
+    assert "Quarterly REPORT" in titles
+
+
+def test_list_tasks_filter_created_at_range(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    client.post(
+        "/tasks",
+        headers=headers,
+        json={
+            "title": "Created at target",
+            "description": "created_at range",
+            "due_date": (date.today() + timedelta(days=8)).isoformat(),
+        },
+    )
+
+    response = client.get(
+        "/tasks?created_at_gte=2000-01-01T00:00:00Z&created_at_lte=2100-01-01T00:00:00Z",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert any(item["title"] == "Created at target" for item in response.get_json()["items"])
+
+
+def test_list_tasks_filter_with_pagination_no_overlap(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    for index in range(5):
+        created = client.post(
+            "/tasks",
+            headers=headers,
+            json={
+                "title": f"Filter page {index}",
+                "description": "pagination + filter",
+                "due_date": (date.today() + timedelta(days=30 + index)).isoformat(),
+            },
+        ).get_json()
+        client.put(f"/tasks/{created['id']}", headers=headers, json={"status": "running"})
+
+    first = client.get("/tasks?status_eq=running&limit=2", headers=headers).get_json()
+    second = client.get(
+        f"/tasks?status_eq=running&limit=2&cursor={first['page']['next_cursor']}",
+        headers=headers,
+    ).get_json()
+
+    first_ids = {item["id"] for item in first["items"]}
+    second_ids = {item["id"] for item in second["items"]}
+    assert first_ids.isdisjoint(second_ids)
+
+
+def test_list_tasks_filter_cursor_mismatch_returns_bad_request(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    for index in range(3):
+        created = client.post(
+            "/tasks",
+            headers=headers,
+            json={
+                "title": f"Cursor mismatch {index}",
+                "description": "cursor mismatch",
+                "due_date": (date.today() + timedelta(days=40 + index)).isoformat(),
+            },
+        ).get_json()
+        client.put(f"/tasks/{created['id']}", headers=headers, json={"status": "running"})
+
+    first_page = client.get("/tasks?status_eq=running&limit=2", headers=headers)
+    assert first_page.status_code == 200
+    cursor = first_page.get_json()["page"]["next_cursor"]
+
+    mismatch_response = client.get(
+        f"/tasks?status_eq=new&limit=2&cursor={cursor}",
+        headers=headers,
+    )
+
+    assert mismatch_response.status_code == 400
+    assert mismatch_response.get_json()["message"] == "Invalid cursor"
+
+
+def test_list_tasks_filter_conflicting_status_filters_returns_validation_error(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = client.get("/tasks?status_eq=new&status_in=new,running", headers=headers)
+
+    assert response.status_code == 400
+    assert response.get_json()["message"] == "Validation error"
+
+
+def test_list_tasks_filter_invalid_ranges_return_validation_error(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response_due_date = client.get(
+        "/tasks?due_date_gte=2026-06-01&due_date_lte=2026-05-01",
+        headers=headers,
+    )
+    response_created_at = client.get(
+        "/tasks?created_at_gte=2026-06-01T00:00:00Z&created_at_lte=2026-05-01T00:00:00Z",
+        headers=headers,
+    )
+
+    assert response_due_date.status_code == 400
+    assert response_created_at.status_code == 400
+
+
+def test_list_tasks_filter_invalid_values_return_validation_error(client) -> None:
+    token = _get_access_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response_status = client.get("/tasks?status_eq=invalid-status", headers=headers)
+    response_date = client.get("/tasks?due_date_gte=not-a-date", headers=headers)
+    response_datetime = client.get("/tasks?created_at_gte=not-a-datetime", headers=headers)
+    response_status_in = client.get("/tasks?status_in=new,invalid", headers=headers)
+
+    assert response_status.status_code == 400
+    assert response_date.status_code == 400
+    assert response_datetime.status_code == 400
+    assert response_status_in.status_code == 400

@@ -13,12 +13,14 @@ class InvalidCursorError(ValueError):
 class TaskCursor:
     created_at: datetime
     id: UUID
+    query_signature: str
 
 
 def encode_task_cursor(cursor: TaskCursor) -> str:
     payload = {
         "created_at": cursor.created_at.isoformat(),
         "id": str(cursor.id),
+        "query_signature": cursor.query_signature,
     }
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
     return encoded.rstrip("=")
@@ -31,7 +33,8 @@ def decode_task_cursor(cursor: str) -> TaskCursor:
         payload = json.loads(raw)
         created_at = datetime.fromisoformat(payload["created_at"])
         task_id = UUID(payload["id"])
+        query_signature = str(payload["query_signature"])
     except (KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
         raise InvalidCursorError("Invalid cursor") from exc
 
-    return TaskCursor(created_at=created_at, id=task_id)
+    return TaskCursor(created_at=created_at, id=task_id, query_signature=query_signature)

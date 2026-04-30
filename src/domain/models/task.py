@@ -22,6 +22,20 @@ class Task(db.Model):  # type: ignore[misc]
     __tablename__ = "tasks"
     __table_args__ = (
         Index("ix_tasks_user_created_at_id_desc", "created_by_id", "created_at", "id"),
+        Index(
+            "ix_tasks_user_status_created_at_id",
+            "created_by_id",
+            "status",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_tasks_user_due_date_created_at_id",
+            "created_by_id",
+            "due_date",
+            "created_at",
+            "id",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
